@@ -212,8 +212,6 @@ NEO4J_PASSWORD=your_neo4j_password
 NEO4J_DATABASE=your_instance_id
 ```
 
-> **Note:** Never commit `.env` to GitHub. It is in `.gitignore` by default.
-
 ### Verify Each Component
 
 ```bash
