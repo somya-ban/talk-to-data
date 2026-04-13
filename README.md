@@ -1,321 +1,182 @@
-# Talk to Data 
-
-**Natural language → SQL → Insights.** A Graph-RAG powered text-to-SQL system for banking microservice data, built for NatWest Code for Purpose 2026.
-
+# Talk to Data
+ 
+**Ask a question in plain English. Get back the SQL, the result, and an explanation.**
+ 
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
 [![Groq](https://img.shields.io/badge/LLM-Groq%20llama--3.3--70b-orange.svg)](https://groq.com)
-[![ChromaDB](https://img.shields.io/badge/vector--store-ChromaDB-blueviolet)](https://trychroma.com)
-[![Neo4j](https://img.shields.io/badge/graph--db-Neo4j%20AuraDB-brightgreen)](https://neo4j.com/cloud/aura)
-[![DuckDB](https://img.shields.io/badge/sql--engine-DuckDB-yellow)](https://duckdb.org)
+[![ChromaDB](https://img.shields.io/badge/vector--store-ChromaDB-7c3aed)](https://trychroma.com)
+[![Neo4j](https://img.shields.io/badge/graph--db-Neo4j%20AuraDB-008CC1)](https://neo4j.com/cloud/aura)
+[![DuckDB](https://img.shields.io/badge/sql--engine-DuckDB-f5c518)](https://duckdb.org)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
+ 
+Built for **NatWest Code for Purpose 2026 — Theme 1: Seamless Self-Service Intelligence.**
 ---
+ 
+![Pipeline](docs/hed.png)
 
-## NatWest Code for Purpose 2026 — Theme 1
-
-> **Talk to Data** — Seamless Self-Service Intelligence
->
-> Business stakeholders and analysts often rely on data teams to generate reports, causing bottlenecks. This solution lets any user ask questions in plain English and get instant, accurate SQL-backed answers — no technical knowledge required.
-
----
-
-## Pipeline
-
-![Talk to Data Pipeline](docs/pipeline.svg)
-
----
-
+## The Problem
+ 
+Banking analysts wait days for data engineers to run reports. The data exists. The question is clear. The bottleneck is the SQL.
+ 
+Talk to Data removes that bottleneck. It lets any analyst ask a question in plain English and instantly receive the correct SQL query, the result, and a plain English explanation of what was found.
+ 
+The intended users are **banking analysts and business stakeholders** who understand their domain deeply but do not write SQL.
+ 
 ## How It Works
-
-The pipeline runs in two phases — **ingestion** (done once at startup) and **query** (runs on every question).
-
-**Ingestion**
  
-1. `loader.py` reads the banking schema JSONL files and converts them to CREATE TABLE DDL statements and plain-English documentation strings.
-2. `embedder.py` embeds these into three ChromaDB collections (DDL, docs, Q-SQL pairs) using `all-MiniLM-L6-v2` running locally.
-3. `graph_builder.py` connects to Neo4j AuraDB and populates 25 Table nodes with 25 FK-backed directed edges, storing the exact SQL join condition on every edge.
-
-**Query**
+Two phases. One question.
  
-4. `schema_linker.py` receives the user question, runs vector similarity search on ChromaDB, expands the result set using 1-hop Neo4j graph traversal to catch missing intermediate tables, and returns a `SchemaContext` object with DDLs, join paths, docs, and few-shot examples.
-5. `sql_gen.py` constructs a 6-layer prompt from the context and calls Groq's `llama-3.3-70b-versatile`. SQL is extracted, validated, and retried up to 3 times if invalid.
-
----
+**1. Train (once at startup)**
  
+```python
+# Load the banking schema — 25 tables, 25 FK-validated relationships
+loader = SchemaLoader().load()
+ 
+# Embed into ChromaDB: DDL collection, docs collection, Q-SQL pairs collection
+embedder.load_from_schema(loader)
+embedder.seed_qa_pairs(SEED_QA_PAIRS)
+ 
+# Build the Neo4j schema graph: 25 nodes, 25 edges, join conditions on every edge
+graph.build_from_loader(loader)
+```
+**2. Ask**
+ 
+```python
+ctx    = linker.link("Show me all trades for high-risk customers")
+result = generator.generate(ctx)
+print(result.sql)
+```
+ 
+```sql
+SELECT t.trade_id, t.price, t.quantity, c.customer_id
+FROM Trade t
+JOIN Order o ON t.order_id = o.order_id
+JOIN Account a ON o.account_id = a.account_id
+JOIN Customer c ON a.customer_id = c.customer_id
+WHERE c.risk_rating = 'HIGH';
+
+```
+The join path `Customer → Account → Order → Trade` was discovered by Neo4j graph traversal. Neither `Account` nor `Order` appeared in the question. The system found them because it knows the schema graph.
+ 
+## Why Graph-RAG, Not Just RAG
+ 
+Standard text-to-SQL hands the LLM the full schema and hopes it writes the right JOINs. That works for single-table queries. It fails on cross-service joins.
+ 
+Our banking schema spans five microservices. Most questions skip over the intermediate tables entirely.
+ 
+| Approach | "Trades for high-risk customers" |
+|---|---|
+| Pure RAG (vector only) | Finds Customer, Trade. Misses Account and Order. LLM hallucinates JOIN or fails. |
+| Graph-RAG (this system) | Finds Customer, Trade. Neo4j traverses to Account and Order. LLM receives exact JOIN conditions. |
+ 
+ChromaDB answers: *which tables are relevant?*
+Neo4j answers: *how do those tables connect?*
+The LLM writes SQL using both.
+ 
+## The Data
+ 
+Most teams working on text-to-SQL use CSV files or public datasets. We built on the format real organisations actually use: a **microservice schema registry**.
+ 
+Twenty-five tables across five banking services (`CustSrv`, `CoreSrv`, `WealthSrv`, `TradeSrv`, `AuthSrv`), stored as JSONL with explicit foreign keys, validated to ensure every relationship has a backing FK and a derivable SQL join condition. The graph builder derives those join conditions automatically and stores them on the Neo4j edges so the LLM never has to guess.
+
 ## Features
  
-The following are **implemented and working**:
+**Implemented and working:**
  
-- Schema ingestion — 25-table banking schema loaded from JSONL into ChromaDB and Neo4j on startup
-- Three ChromaDB collections — separate DDL, documentation, and Q-SQL pair collections following Vanna's training data architecture
-- Graph-RAG schema linking — vector retrieval combined with Neo4j `shortestPath` traversal for multi-hop cross-service JOIN discovery
-- FK-validated graph — all 25 relationships have backing foreign keys; join conditions are stored on Neo4j edges and passed verbatim to the LLM
-- Groq LLM SQL generation — structured 6-layer prompt (schema, joins, docs, examples, question), deterministic at temperature 0
-- SQL self-correction — up to 3 retry attempts; each retry appends the execution error to the prompt
-- Seed Q-SQL pairs — 10 banking-specific question-SQL examples loaded into ChromaDB at startup
-- Semantic layer hook — `add_documentation()` interface for user-confirmed metric definitions
+- Schema ingestion from JSONL — 25 tables and 25 FK-backed relationships loaded into ChromaDB and Neo4j on startup
+- Three ChromaDB collections following Vanna's training data architecture — DDL, documentation, Q-SQL pairs
+- Graph-RAG schema linking — ChromaDB semantic search combined with Neo4j `shortestPath` traversal for multi-hop cross-service JOIN discovery
+- SQL generation via Groq `llama-3.3-70b-versatile` — 6-layer structured prompt (schema, joins, docs, examples, question), temperature 0.0
+- Self-correction loop — failed SQL execution appends the error to the prompt and regenerates, up to 3 attempts
+- 10 seeded Q-SQL pairs loaded into ChromaDB at startup for few-shot examples
+- User-confirmed metric definitions — `add_documentation()` interface for business metric confirmation before first query
+- FK-derived join conditions stored on Neo4j edges and passed verbatim to the LLM
 
-## What It Does
+**Partially implemented or in progress:**
+ 
+- DuckDB SQL execution — the executor is designed; synthetic data seeding is not yet complete
+- Flask + React frontend — under active development by a teammate; not yet integrated end-to-end
+- PII column masking — scaffolded in `src/privacy/`; masking logic not yet written
+- Correction storage loop — corrected Q-SQL pairs are not yet written back to ChromaDB after a user fix
 
-Ask a question in plain English and get back:
-
-**1. Relevant Schema** — Graph-RAG retrieves only the tables and columns needed, not the entire schema
-
-**2. Join Paths** — Neo4j graph traversal finds exactly how tables connect across microservices
-
-**3. Generated SQL** — Groq LLM writes accurate, executable SQL using the retrieved context
-
-**4. Query Results** — DuckDB executes the SQL and returns a pandas DataFrame
-
-**5. Plain English Explanation** — Every query comes with a one-sentence description of what it does
-
----
-
-## Why Graph-RAG?
-
-Standard text-to-SQL gives the LLM the full schema and hopes it writes the right JOINs. That fails on cross-service joins.
-
-Our banking schema spans **5 microservices**. When a user asks *"show trades for high-risk customers"*, the path is:
-
-```
-Customer → Account → Order → Trade
-```
-
-ChromaDB alone retrieves `Customer` and `Trade` — it misses `Account` and `Order` because they are not mentioned in the question. Without them, the LLM either hallucinates JOIN columns or produces a broken query.
-
-Graph-RAG solves this:
-
-| Component | Role |
-|---|---|
-| **ChromaDB** | Finds semantically relevant tables via vector similarity |
-| **Neo4j** | Traverses the schema graph to find missing intermediate tables |
-| **SchemaLinker** | Merges both results into one context with exact JOIN conditions |
-| **Groq LLM** | Generates SQL using the complete, JOIN-path-aware context |
-
----
-
-## Architecture
-
-### Five-Stage Pipeline
-
-```
-User Question
-     │
-     ▼
-┌─────────────────────────────────────────────────────┐
-│                   SCHEMA LINKER                     │
-│                                                     │
-│  ChromaDB (semantic)    Neo4j AuraDB (structural)   │
-│  ├── DDL collection     ├── 25 Table nodes          │
-│  ├── Doc collection     ├── 25 Relationship edges   │
-│  └── Q-SQL collection   └── FK-derived JOIN paths   │
-│                                                     │
-│  Output: SchemaContext (DDLs + Docs + JoinPaths)    │
-└─────────────────────────────────────────────────────┘
-     │
-     ▼
-┌─────────────────────────────────────────────────────┐
-│                  SQL GENERATOR                      │
-│                                                     │
-│  Model: llama-3.3-70b-versatile (Groq, free tier)  │
-│  Prompt layers:                                     │
-│    1. System instructions + strict rules            │
-│    2. DDL statements (table structure)              │
-│    3. JOIN conditions (from Neo4j)                  │
-│    4. Business definitions (metric dictionary)      │
-│    5. Few-shot Q-SQL examples (from ChromaDB)       │
-│    6. User question                                 │
-└─────────────────────────────────────────────────────┘
-     │
-     ▼
-┌─────────────────────────────────────────────────────┐
-│                    EXECUTOR                         │
-│                                                     │
-│  DuckDB in-memory SQL execution                     │
-│  Self-correction loop (up to 3 retries)             │
-│  Error → regenerate SQL with feedback               │
-│  Correct SQL stored back to ChromaDB                │
-└─────────────────────────────────────────────────────┘
-     │
-     ▼
-  DataFrame + Chart + Explanation
-```
-
-### Schema Data
-
-**25 tables** across 5 banking microservices, fully validated:
-
-| Service | Tables |
-|---|---|
-| `CustSrv` | Customer, CustomerAddress, CustomerType, Branch, Company |
-| `CoreSrv` | Account, AccountBalance, CashMovement, TransferRequest |
-| `WealthSrv` | Advisor, ProductWrapper, WrapProvider, ProductWrapperType |
-| `TradeSrv` | Order, Trade, Instrument, SecurityType, SecuritySubType, AggregateOrder, Batch |
-| `AuthSrv` | User, UserGroup, UserGroupMembership, Application, Session |
-
-**25 relationships** — all FK-backed, join conditions validated, stored as Neo4j graph edges.
-
----
-
-## Tech Stack
-
-| Layer | Technology | Why |
-|---|---|---|
-| Vector Store | ChromaDB 0.5.3 | Three collections: DDL, docs, Q-SQL pairs |
-| Embeddings | sentence-transformers all-MiniLM-L6-v2 | Local, no API cost, 384-dim vectors |
-| Graph DB | Neo4j AuraDB Free | Shortest-path traversal for multi-hop JOINs |
-| LLM | Groq llama-3.3-70b-versatile | Free tier, 6000 RPM, deterministic at temp=0 |
-| SQL Engine | DuckDB 0.10.3 | In-memory, zero-config, pandas-native |
-| Backend | Flask | REST API for frontend |
-| Frontend | React | Interactive query interface |
-| Schema Source | JSONL (custom format) | 25 tables, 25 relationships, FK-validated |
-
----
-
-## Project Structure
-
-```
-talk-to-data/
-├── data/
-│   ├── banking_tables_typed.jsonl      # 25 validated table definitions
-│   └── banking_relationships_v2.jsonl  # 25 FK-backed relationship edges
-├── src/
-│   ├── ingestion/
-│   │   └── loader.py                   # JSONL → DDL + documentation strings
-│   ├── retrieval/
-│   │   ├── embedder.py                 # ChromaDB vector store (3 collections)
-│   │   ├── graph_builder.py            # Neo4j graph population + path queries
-│   │   └── schema_linker.py            # Graph-RAG: ChromaDB + Neo4j → SchemaContext
-│   ├── generation/
-│   │   └── sql_gen.py                  # Groq LLM SQL generation + retry loop
-│   ├── semantic/
-│   │   └── metric_dict.py              # User-confirmed metric definitions
-│   ├── validation/
-│   │   └── executor.py                 # DuckDB execution + self-correction loop
-│   ├── privacy/
-│   │   └── guard.py                    # PII column masking
-│   └── explanation/
-│       └── explainer.py                # Plain English query narration
-├── docs/
-│   └── pipeline.svg                    # Architecture diagram
-├── .env.example                        # Credential template (no secrets)
-├── requirements.txt
-└── README.md
-```
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Python 3.11+
-- A free [Groq API key](https://console.groq.com) — takes 2 minutes
-- A free [Neo4j AuraDB instance](https://console.neo4j.io) — takes 5 minutes
-
-### Installation
-
+## Install and Run
+ 
+**Prerequisites:** Python 3.11+, a free [Groq API key](https://console.groq.com), a free [Neo4j AuraDB instance](https://console.neo4j.io).
+ 
 ```bash
-git clone <your-repo-url>
+git clone <https://github.com/somya-ban/talk-to-data.git>
 cd talk-to-data
-
-# Create and activate virtual environment
-python -m venv venv
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
-
+ 
+python -m venv envdata
+envdata\Scripts\activate        # Windows
+# source venv/bin/activate   # macOS/Linux
+ 
 pip install -r requirements.txt
 ```
-
-### Configuration
-
-Create a `.env` file in the project root:
-
+ 
+Copy `.env.example` to `.env` and fill in your credentials:
+ 
+```bash
+cp .env.example .env
+```
+ 
 ```env
-GROQ_API_KEY=your_groq_api_key_here
-
+GROQ_API_KEY=
+ 
 NEO4J_URI=neo4j+s://xxxx.databases.neo4j.io
 NEO4J_USERNAME=your_instance_id
-NEO4J_PASSWORD=your_neo4j_password
+NEO4J_PASSWORD=your_password
 NEO4J_DATABASE=your_instance_id
 ```
-
-### Verify Each Component
-
+ 
+Verify each component before running:
+ 
 ```bash
-# 1. Test Neo4j connection
-python test_neo4j.py
-
-# 2. Test the full Graph-RAG pipeline
-python test_schema_linker.py
-
-# 3. Test SQL generation
-python test_sql_gen.py
+python test_neo4j.py           # Neo4j connection
+python test_schema_linker.py   # Graph-RAG retrieval
+python test_sql_gen.py         # End-to-end SQL generation
 ```
 
-### Run the Application
 
-```bash
-python app.py
+## Usage Example
+ 
+The three test scripts demonstrate the full pipeline. Here are example questions and what the system returns.
+ 
+**Question:** *What is the total balance across all accounts?*
+ 
+```sql
+SELECT SUM(ab.balance) AS total_balance FROM AccountBalance ab;
 ```
+Each result also returns a one-sentence plain English explanation of what the query does.
 
-Navigate to `http://localhost:5000` and start asking questions.
+## Architecture
+ 
+The system is structured in four layers.
+ 
+**Ingestion** (`src/ingestion/`) reads the JSONL schema files. `loader.py` converts every table to a `CREATE TABLE` DDL statement and every relationship to a plain-English documentation string with an explicit JOIN clause. These feed into ChromaDB.
+ 
+**Retrieval** (`src/retrieval/`) has three files. `embedder.py` manages three ChromaDB collections. `graph_builder.py` populates Neo4j with Table nodes and directed relationship edges, storing the SQL join condition on every edge. `schema_linker.py` combines both: vector similarity search finds relevant tables, then Neo4j 1-hop traversal expands the set to include intermediate join tables that were not mentioned in the question.
+ 
+**Generation** (`src/generation/`) constructs a structured prompt from the `SchemaContext` object and calls Groq. The prompt layers are: system instructions, DDL statements, join conditions from Neo4j, business definitions, few-shot examples from ChromaDB, and the user question.
+ 
+**Execution** (`src/validation/`) runs generated SQL against DuckDB. If execution fails, the error message is appended to the prompt and the LLM regenerates.
+ 
+> We use Neo4j's `shortestPath` Cypher traversal to find multi-hop join paths between any two tables in the banking schema graph. This addresses the core failure mode of pure vector-based text-to-SQL: intermediate join tables that are structurally necessary but semantically invisible in the user's question.
 
----
+## Future Improvements
 
-## Example Queries
+- Wire the correction loop so validated SQL improves the system over time
+- PII column detection and result masking
+- Metric confirmation UI — user defines business metrics before first query
 
-| Question | Generated SQL |
-|---|---|
-| Show all trades for high-risk customers | 4-table JOIN: Customer → Account → Order → Trade |
-| Total balance across all accounts | SUM(balance) on AccountBalance |
-| List advisors and their assigned branch | Advisor JOIN Branch on branch_id |
-| Cash movements for a specific account | CashMovement filtered by account_id |
-| Count trades per instrument | GROUP BY on Trade JOIN Instrument |
-
----
-
-## Key Design Decisions
-
-### 1. Never Give the LLM the Full Schema
-
-Following Vanna's core insight: giving an LLM all 25 table DDLs produces worse SQL than giving it only the 6-8 relevant ones. ChromaDB retrieves the relevant subset; Neo4j adds missing intermediate tables.
-
-### 2. Graph-RAG Over Pure RAG
-
-Pure vector similarity retrieves tables mentioned in the question. It misses tables that are *structurally necessary* but *semantically invisible*. Neo4j's shortest-path traversal closes this gap — every join path is explicitly provided to the LLM.
-
-### 3. Semantic Layer for Metrics
-
-Banking metrics (`total_balance`, `net_cash_flow`) have precise definitions. Users confirm these before the first query. Confirmed definitions are stored in ChromaDB's documentation collection so the LLM uses the exact formula — not its own guess.
-
-### 4. Self-Correction Loop
-
-When DuckDB execution fails, the error message is appended to the prompt and the LLM regenerates. Corrected SQL is stored back into ChromaDB as a Q-SQL pair — the system improves with every correction.
-
----
-
-## Architecture Decisions — Research Basis
-
-This system synthesises lessons from:
-
-- **Vanna AI** — Three training types (DDL, documentation, Q-SQL pairs), ChromaDB collections pattern
-- **LinkedIn SQL Bot** — Schema linking: table pruning before LLM context construction
-- **DIN-SQL** — Decomposed SQL generation for complex multi-table queries
-- **CHESS** — Evidence-based prompting with explicit join conditions
-- **Spider 2.0** — Cross-service schema validation methodology
-
----
-
-## Team
-
-Built for **NatWest Code for Purpose 2026** — Theme 1: Talk to Data.
-
-Final-year CSE students, Thapar Institute of Engineering and Technology.
-
----
+## Research Basis
+ 
+The architecture synthesises lessons from:
+ 
+- **Vanna AI** — three training data types (DDL, documentation, Q-SQL pairs) and the ChromaDB vector store pattern
+- **LinkedIn SQL Bot** — table pruning before LLM context construction (schema linking)
+- **DIN-SQL** — decomposed SQL generation for multi-table queries
+- **CHESS** — evidence-based prompting with explicit join conditions
 
 ## License
 
