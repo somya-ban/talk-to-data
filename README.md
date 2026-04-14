@@ -11,8 +11,10 @@
  
 Built for **NatWest Code for Purpose 2026 — Theme 1: Seamless Self-Service Intelligence.**
 ---
- 
-![Pipeline](docs/hed.png)
+
+![Demo](backend/docs/talk-to-data-gif.gif) 
+
+![Pipeline](backend/docs/hed.png)
 
 ## The Problem
  
