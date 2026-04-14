@@ -28,9 +28,6 @@ from src.retrieval.embedder import SchemaEmbedder
 from src.retrieval.graph_builder import SchemaGraphBuilder
 from src.retrieval.schema_linker import SchemaLinker
 
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-
 def _configure_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -94,6 +91,13 @@ def _explain(df: pd.DataFrame, question: str) -> str:
     cols = ", ".join(df.columns.tolist())
     return f"Returned {len(df)} rows for '{question}' with columns: {cols}."
 
+def _should_execute_sql() -> bool:
+    sql_only = os.getenv("SQL_ONLY", "true").strip().lower()
+    if sql_only in {"1", "true", "yes", "y", "on"}:
+        return False
+    value = os.getenv("EXECUTE_SQL", "").strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
 
 def create_app() -> Flask:
     _configure_logging()
@@ -142,8 +146,21 @@ def create_app() -> Flask:
             200,
         )
 
-    @app.route("/api/query", methods=["POST", "OPTIONS"])
+    @app.route("/query", methods=["POST", "OPTIONS", "GET"])
+    @app.route("/api/query", methods=["POST", "OPTIONS", "GET"])
     def query():
+        if request.method == "GET":
+            question = (request.args.get("query") or "").strip()
+            if not question:
+                return (
+                    jsonify(
+                        {"error": "Use POST with JSON body or GET ?query=..."}
+                    ),
+                    400,
+                )
+            payload = {"query": question}
+        else:
+            payload = request.get_json(silent=True) or {}
         if request.method == "OPTIONS":
             return jsonify({"status": "ok"}), 200
 
@@ -151,7 +168,6 @@ def create_app() -> Flask:
         if err:
             return jsonify({"error": err}), 500
 
-        payload = request.get_json(silent=True) or {}
         question = str(payload.get("query", "")).strip()
 
         if not question:
@@ -178,17 +194,20 @@ def create_app() -> Flask:
                 return jsonify({"error": sql_result.error}), 500
 
             sql = sql_result.sql
-            df = _execute_sql(sql)
-            explanation = sql_result.explanation or _explain(df, question)
+            data = []
+            explanation = sql_result.explanation or "SQL generated successfully."
 
-            data = df.to_dict(orient="records")
+            if _should_execute_sql():
+                df = _execute_sql(sql)
+                data = df.to_dict(orient="records")
+                explanation = sql_result.explanation or _explain(df, question)
             duration_ms = int((time.time() - start) * 1000)
             _log_event(
                 logger,
                 "query_complete",
                 query=question,
                 duration_ms=duration_ms,
-                rows=len(df),
+                rows=len(data),
             )
 
             return (
