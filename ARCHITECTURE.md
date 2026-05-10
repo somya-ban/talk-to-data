@@ -166,8 +166,6 @@ The order matters. The LLM reads top-to-bottom, and instructions placed earlier 
 
 I tried a flatter prompt earlier — schema and question only — and the accuracy was substantially worse on multi-hop questions. The structured layering is what makes the generator reliable enough to ship.
 
----
-
 ## Stage 3: Execution and self-correction
 
 The executor runs SQL against the analytical engine and returns either a DataFrame or a typed error. The orchestrator (in `app.py`) wraps this in a retry loop that runs up to three times.
