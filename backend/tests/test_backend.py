@@ -10,8 +10,9 @@ Covers:
   Stage 4 — End-to-end pipeline (question → SQL → result → narration)
   Stage 5 — Edge cases and error scenarios
 
-Run from project root with envdata activated:
-    python test_backend.py
+Run from the backend directory:
+    cd backend
+    python tests/test_backend.py
 
 Expected output: all sections print PASS.
 Any FAIL line means something needs fixing before the frontend is built.
@@ -19,17 +20,25 @@ Any FAIL line means something needs fixing before the frontend is built.
 
 import os
 import sys
+from pathlib import Path
 import duckdb
 import pandas as pd
 from dotenv import load_dotenv
 
 # Cleanup test files
 import shutil
+import tempfile
 
 # chart_data JSON serialisability
 import json
 
-load_dotenv()
+# Run from backend/ so `src` and `data/` resolve (not `backend.src` package)
+BACKEND_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BACKEND_ROOT))
+os.chdir(BACKEND_ROOT)
+load_dotenv(BACKEND_ROOT / ".env")
+
+CHROMA_TEST_DIR: str | None = None
 
 # ── Colour helpers ─────────────────────────────────────────────────────────────
 
@@ -125,16 +134,16 @@ check(
 # Imports — every component
 import_ok = True
 try:
-    from backend.src.ingestion.loader import SchemaLoader
-    from backend.src.ingestion.data_seeder import BankingDataSeeder
-    from backend.src.retrieval.embedder import SchemaEmbedder
-    from backend.src.retrieval.graph_builder import SchemaGraphBuilder
-    from backend.src.retrieval.schema_linker import SchemaLinker, SchemaContext
-    from backend.src.generation.sql_gen import SQLGenerator, SQLResult, SEED_QA_PAIRS
-    from backend.src.validation.executor import SQLExecutor, ErrorType
-    from backend.src.privacy.guard import PrivacyGuard
-    from backend.src.semantic.metric_dict import MetricDictionary
-    from backend.src.explanation.explainer import ResultExplainer
+    from src.ingestion.loader import SchemaLoader
+    from src.ingestion.data_seeder import BankingDataSeeder
+    from src.retrieval.embedder import SchemaEmbedder
+    from src.retrieval.graph_builder import SchemaGraphBuilder
+    from src.retrieval.schema_linker import SchemaLinker, SchemaContext
+    from src.generation.sql_gen import SQLGenerator, SQLResult, SEED_QA_PAIRS
+    from src.validation.executor import SQLExecutor, ErrorType
+    from src.privacy.guard import PrivacyGuard
+    from src.semantic.metric_dict import MetricDictionary
+    from src.explanation.explainer import ResultExplainer
 
     _pass("All 10 pipeline modules import cleanly")
     results["passed"] += 1
@@ -146,7 +155,7 @@ except ImportError as e:
     sys.exit(1)
 
 try:
-    from backend.app import app as flask_app
+    from app import app as flask_app
 
     _pass("app.py imports cleanly (Flask app created)")
     results["passed"] += 1
@@ -199,7 +208,10 @@ check("Service descriptions present in docs", any("CustSrv" in d for d in docs))
 
 _section("STAGE 2B — SchemaEmbedder")
 
-embedder = SchemaEmbedder(persist_dir="./chroma_db_test")
+# Fresh temp dir avoids "readonly database" from stale/locked chroma_db_test folders
+CHROMA_TEST_DIR = tempfile.mkdtemp(prefix="chroma_test_")
+_info(f"ChromaDB test dir: {CHROMA_TEST_DIR}")
+embedder = SchemaEmbedder(persist_dir=CHROMA_TEST_DIR)
 result = embedder.load_from_schema(loader)
 embedder._clear_collection(embedder.sql_col)  # remove stale pairs from previous runs
 
@@ -1027,12 +1039,12 @@ else:
 
 print(f"{BOLD}{'═' * 60}{RESET}\n")
 
-if os.path.exists("./chroma_db_test"):
+if CHROMA_TEST_DIR and os.path.exists(CHROMA_TEST_DIR):
     try:
-        shutil.rmtree("./chroma_db_test")
-    except PermissionError:
+        shutil.rmtree(CHROMA_TEST_DIR)
+    except (PermissionError, OSError):
         _info(
-            "chroma_db_test cleanup skipped (Windows file lock — delete manually if needed)"
+            f"Chroma cleanup skipped (file lock) — delete manually: {CHROMA_TEST_DIR}"
         )
 if os.path.exists("metrics.yaml"):
     # Keep it — it has real content from the test

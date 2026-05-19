@@ -1,12 +1,20 @@
 """
 Verification test for schema_linker.py
-Run: python test_schema_linker.py
+Run: cd backend && python tests/test_schema_linker.py
 """
 
-from backend.src.ingestion.loader import SchemaLoader
-from backend.src.retrieval.embedder import SchemaEmbedder
-from backend.src.retrieval.graph_builder import SchemaGraphBuilder
-from backend.src.retrieval.schema_linker import SchemaLinker
+import os
+import sys
+from pathlib import Path
+
+BACKEND_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BACKEND_ROOT))
+os.chdir(BACKEND_ROOT)
+
+from src.ingestion.loader import SchemaLoader
+from src.retrieval.embedder import SchemaEmbedder
+from src.retrieval.graph_builder import SchemaGraphBuilder
+from src.retrieval.schema_linker import SchemaLinker
 
 print("=== SCHEMA LINKER TEST ===\n")
 

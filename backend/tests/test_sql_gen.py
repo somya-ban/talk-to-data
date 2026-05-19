@@ -1,13 +1,21 @@
 """
 Verification test for sql_gen.py
-Run: python test_sql_gen.py
+Run: cd backend && python tests/test_sql_gen.py
 """
 
-from backend.src.ingestion.loader import SchemaLoader
-from backend.src.retrieval.embedder import SchemaEmbedder
-from backend.src.retrieval.graph_builder import SchemaGraphBuilder
-from backend.src.retrieval.schema_linker import SchemaLinker
-from backend.src.generation.sql_gen import SQLGenerator, SEED_QA_PAIRS
+import os
+import sys
+from pathlib import Path
+
+BACKEND_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BACKEND_ROOT))
+os.chdir(BACKEND_ROOT)
+
+from src.ingestion.loader import SchemaLoader
+from src.retrieval.embedder import SchemaEmbedder
+from src.retrieval.graph_builder import SchemaGraphBuilder
+from src.retrieval.schema_linker import SchemaLinker
+from src.generation.sql_gen import SQLGenerator, SEED_QA_PAIRS
 
 print("=== SQL GENERATOR TEST ===\n")
 

@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from typing import Optional, List, Tuple
 from enum import Enum
 
-from backend.src.generation.sql_gen import SQLGenerator, SQLResult
+from src.generation.sql_gen import SQLGenerator, SQLResult
 
 MAX_RETRIES = 3
 

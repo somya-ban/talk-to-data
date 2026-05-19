@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable, AuthError
 
-from backend.src.ingestion.loader import SchemaLoader
+from src.ingestion.loader import SchemaLoader
 
 load_dotenv()
 

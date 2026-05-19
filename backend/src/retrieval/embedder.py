@@ -11,7 +11,7 @@ import hashlib
 import chromadb
 from chromadb.utils import embedding_functions
 from typing import List, Dict
-from backend.src.ingestion.loader import SchemaLoader
+from src.ingestion.loader import SchemaLoader
 
 
 EMBED_MODEL = "all-MiniLM-L6-v2"
@@ -226,6 +226,24 @@ class SchemaEmbedder:
 
     def _clear_collection(self, collection):
         """Clear all documents from a collection before reloading."""
-        existing = collection.get()
-        if existing["ids"]:
-            collection.delete(ids=existing["ids"])
+        try:
+            existing = collection.get()
+            if existing["ids"]:
+                collection.delete(ids=existing["ids"])
+        except Exception as e:
+            # Stale/locked SQLite (e.g. another process or corrupted chroma dir)
+            print(f"Warning: could not clear {collection.name}: {e}")
+            coll_name = collection.name
+            try:
+                self.client.delete_collection(coll_name)
+            except Exception:
+                pass
+            fresh = self.client.get_or_create_collection(
+                name=coll_name, embedding_function=self.ef
+            )
+            if coll_name == DDL_COLLECTION:
+                self.ddl_col = fresh
+            elif coll_name == DOC_COLLECTION:
+                self.doc_col = fresh
+            elif coll_name == SQL_COLLECTION:
+                self.sql_col = fresh

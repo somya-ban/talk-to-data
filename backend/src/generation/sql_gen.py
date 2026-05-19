@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from groq import Groq
 from dotenv import load_dotenv
 
-from backend.src.retrieval.schema_linker import SchemaContext
+from src.retrieval.schema_linker import SchemaContext
 
 load_dotenv()
 

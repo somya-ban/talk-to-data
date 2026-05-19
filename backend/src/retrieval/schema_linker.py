@@ -19,8 +19,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Dict
 
-from backend.src.retrieval.embedder import SchemaEmbedder
-from backend.src.retrieval.graph_builder import SchemaGraphBuilder
+from src.retrieval.embedder import SchemaEmbedder
+from src.retrieval.graph_builder import SchemaGraphBuilder
 
 logger = logging.getLogger(__name__)
 
